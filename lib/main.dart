@@ -11,6 +11,15 @@ void main() async {
   runApp(const MyApp());
 }
 
+class NoGlowScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Widget buildOverscrollIndicator(BuildContext context, Widget child, ScrollableDetails details) {
+    return child; // disables the glow
+  }
+}
+
+
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 

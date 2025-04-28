@@ -2,288 +2,261 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-class VehicleRegistration extends StatefulWidget {
-  const VehicleRegistration({super.key});
+class VehicleManager extends StatefulWidget {
+  const VehicleManager({super.key});
 
   @override
-  State<VehicleRegistration> createState() => _VehicleRegistrationState();
+  State<VehicleManager> createState() => _VehicleManagerState();
 }
 
-class _VehicleRegistrationState extends State<VehicleRegistration> {
-  final _formKey = GlobalKey<FormState>();
-  final _vehicleNameController = TextEditingController();
-  final _vehicleNumberController = TextEditingController();
-  bool isLoading = true;
-  String name = '';
-  String flatNumber = '';
-  String flatId = '';
-  String vehicleType = '';
-  final List<String> vehicleTypes = ['Car', 'Bike', 'Scooter', 'Other'];
+class _VehicleManagerState extends State<VehicleManager> {
+  final TextEditingController _vehicleNameController = TextEditingController();
+  final TextEditingController _vehicleNumberController = TextEditingController();
 
-  @override
-  void initState() {
-    super.initState();
-    fetchUserData();
+  bool _isLoading = false;
+  String? _editingDocId;
+
+  Future<String?> _fetchUserName() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+
+    final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+    return userDoc['name'];
   }
 
-  Future<void> fetchUserData() async {
+  Future<void> _submitVehicle() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    final userDoc =
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-
-    final data = userDoc.data();
-    if (data != null && mounted) {
-      setState(() {
-        name = data['name'] ?? '';
-        flatNumber = data['flatNumber'] ?? '';
-        flatId = data['flatId'] ?? '';
-        isLoading = false;
-      });
-    }
-  }
-
-  Future<void> registerVehicle() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    final vehicleData = {
-      'vehicleType': vehicleType,
-      'vehicleName': _vehicleNameController.text.trim(),
-      'vehicleNumber': _vehicleNumberController.text.trim(),
-      'name': name,
-      'flatNumber': flatNumber,
-      'flatId': flatId,
-      'timestamp': FieldValue.serverTimestamp(),
-    };
-
-    await FirebaseFirestore.instance
-        .collection('vehicles')
-        .doc(user.uid)
-        .collection('userVehicles')
-        .add(vehicleData);
-
-    if (mounted) {
+    if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Vehicle registered successfully')),
+        const SnackBar(content: Text('User not logged in!')),
       );
-      _formKey.currentState!.reset();
+      return;
+    }
+
+    final vehicleName = _vehicleNameController.text.trim();
+    final vehicleNumber = _vehicleNumberController.text.trim();
+
+    if (vehicleName.isEmpty || vehicleNumber.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill all fields!')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final flatId = userDoc['flatId'] ?? '';
+      final flatNumber = userDoc['flatNumber'] ?? '';
+      final userName = userDoc['name'] ?? '';
+
+      final vehicleData = {
+        'vehicleName': vehicleName,
+        'vehicleNumber': vehicleNumber,
+        'userName': userName,
+        'flatId': flatId,
+        'flatNumber': flatNumber,
+        'timestamp': FieldValue.serverTimestamp(),
+      };
+
+      if (_editingDocId != null) {
+        // Update existing document
+        await FirebaseFirestore.instance
+            .collection('vehicles')
+            .doc(userName)
+            .collection('vehicles')
+            .doc(_editingDocId)
+            .update(vehicleData);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Vehicle updated successfully!')),
+        );
+      } else {
+        // Add new document
+        await FirebaseFirestore.instance
+            .collection('vehicles')
+            .doc(userName)
+            .collection('vehicles')
+            .add(vehicleData);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Vehicle saved successfully!')),
+        );
+      }
+
       _vehicleNameController.clear();
       _vehicleNumberController.clear();
-      setState(() => vehicleType = '');
+      _editingDocId = null;
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
+    }
+
+    setState(() => _isLoading = false);
+  }
+
+  Future<void> _deleteVehicle(String docId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final userName = userDoc['name'] ?? '';
+
+      await FirebaseFirestore.instance
+          .collection('vehicles')
+          .doc(userName)
+          .collection('vehicles')
+          .doc(docId)
+          .delete();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vehicle deleted successfully!')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
     }
   }
 
-  Future<void> deleteVehicle(String docId) async {
-    final userId = FirebaseAuth.instance.currentUser?.uid;
-    if (userId == null) return;
-
-    await FirebaseFirestore.instance
-        .collection('vehicles')
-        .doc(userId)
-        .collection('userVehicles')
-        .doc(docId)
-        .delete();
-  }
-
-  void showEditDialog(String docId, Map<String, dynamic> data) {
-    final TextEditingController editName =
-    TextEditingController(text: data['vehicleName']);
-    final TextEditingController editNumber =
-    TextEditingController(text: data['vehicleNumber']);
-    String editType = data['vehicleType'];
-
-    final _editFormKey = GlobalKey<FormState>();
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Edit Vehicle"),
-        content: Form(
-          key: _editFormKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                value: editType,
-                items: vehicleTypes
-                    .map((type) =>
-                    DropdownMenuItem(value: type, child: Text(type)))
-                    .toList(),
-                onChanged: (val) => editType = val!,
-                validator: (val) =>
-                val == null || val.isEmpty ? 'Select type' : null,
-                decoration: const InputDecoration(labelText: 'Vehicle Type'),
-              ),
-              TextFormField(
-                controller: editName,
-                decoration: const InputDecoration(labelText: 'Vehicle Name'),
-                validator: (val) =>
-                val == null || val.isEmpty ? 'Enter name' : null,
-              ),
-              TextFormField(
-                controller: editNumber,
-                decoration:
-                const InputDecoration(labelText: 'Vehicle Number'),
-                validator: (val) =>
-                val == null || val.isEmpty ? 'Enter number' : null,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (!_editFormKey.currentState!.validate()) return;
-
-              await FirebaseFirestore.instance
-                  .collection('vehicles')
-                  .doc(FirebaseAuth.instance.currentUser!.uid)
-                  .collection('userVehicles')
-                  .doc(docId)
-                  .update({
-                'vehicleType': editType,
-                'vehicleName': editName.text.trim(),
-                'vehicleNumber': editNumber.text.trim(),
-              });
-
-              Navigator.pop(context);
-            },
-            child: const Text("Update"),
-          ),
-        ],
-      ),
-    );
+  void _editVehicle(Map<String, dynamic> data, String docId) {
+    _vehicleNameController.text = data['vehicleName'] ?? '';
+    _vehicleNumberController.text = data['vehicleNumber'] ?? '';
+    setState(() {
+      _editingDocId = docId;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final userId = FirebaseAuth.instance.currentUser?.uid;
+    final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Vehicle Registration")),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-        padding: const EdgeInsets.all(20),
+      appBar: AppBar(title: const Text("Vehicle Manager")),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: SingleChildScrollView(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    DropdownButtonFormField<String>(
-                      value: vehicleType.isNotEmpty ? vehicleType : null,
-                      items: vehicleTypes
-                          .map((type) => DropdownMenuItem(
-                          value: type, child: Text(type)))
-                          .toList(),
-                      onChanged: (val) =>
-                          setState(() => vehicleType = val!),
-                      validator: (val) =>
-                      val == null || val.isEmpty
-                          ? 'Select vehicle type'
-                          : null,
-                      decoration: const InputDecoration(
-                          labelText: 'Vehicle Type'),
+              TextFormField(
+                controller: _vehicleNameController,
+                decoration: const InputDecoration(
+                  labelText: "Vehicle Name",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _vehicleNumberController,
+                decoration: const InputDecoration(
+                  labelText: "Vehicle Number",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 30),
+              Center(
+                child: ElevatedButton.icon(
+                  icon: _isLoading
+                      ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
                     ),
-                    TextFormField(
-                      controller: _vehicleNameController,
-                      decoration: const InputDecoration(
-                          labelText: 'Vehicle Name'),
-                      validator: (val) => val == null || val.isEmpty
-                          ? 'Enter vehicle name'
-                          : null,
-                    ),
-                    TextFormField(
-                      controller: _vehicleNumberController,
-                      decoration: const InputDecoration(
-                          labelText: 'Vehicle Number'),
-                      validator: (val) => val == null || val.isEmpty
-                          ? 'Enter vehicle number'
-                          : null,
-                    ),
-                    const SizedBox(height: 20),
-                    ElevatedButton(
-                      onPressed: registerVehicle,
-                      child: const Text('Register Vehicle'),
-                    ),
-                  ],
+                  )
+                      : Icon(_editingDocId == null ? Icons.save : Icons.update),
+                  label: Text(
+                    _isLoading
+                        ? "Processing..."
+                        : _editingDocId == null
+                        ? "Submit"
+                        : "Update Vehicle",
+                  ),
+                  onPressed: _isLoading ? null : _submitVehicle,
                 ),
               ),
               const SizedBox(height: 30),
               const Text(
                 "Your Vehicles",
-                style:
-                TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 12),
-              if (userId != null)
-                StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('vehicles')
-                      .doc(userId)
-                      .collection('userVehicles')
-                      .orderBy('timestamp', descending: true)
-                      .snapshots(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState ==
-                        ConnectionState.waiting) {
-                      return const CircularProgressIndicator();
+              const SizedBox(height: 10),
+              if (user != null)
+                FutureBuilder<String?>(
+                  future: _fetchUserName(),
+                  builder: (context, nameSnapshot) {
+                    if (nameSnapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
                     }
 
-                    final vehicles = snapshot.data?.docs ?? [];
-
-                    if (vehicles.isEmpty) {
-                      return const Text("No vehicles registered.");
+                    if (!nameSnapshot.hasData || nameSnapshot.data == null) {
+                      return const Text('No vehicles registered yet.');
                     }
 
-                    return ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: vehicles.length,
-                      itemBuilder: (context, index) {
-                        final doc = vehicles[index];
-                        final data =
-                        doc.data() as Map<String, dynamic>;
+                    return StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('vehicles')
+                          .doc(nameSnapshot.data)
+                          .collection('vehicles')
+                          .orderBy('timestamp', descending: true)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(child: CircularProgressIndicator());
+                        }
 
-                        return Card(
-                          child: ListTile(
-                            leading: Icon(
-                              data['vehicleType'] == 'Car'
-                                  ? Icons.directions_car
-                                  : data['vehicleType'] == 'Bike'
-                                  ? Icons.motorcycle
-                                  : Icons.directions_transit,
-                            ),
-                            title: Text(
-                                '${data['vehicleType']} - ${data['vehicleName']}'),
-                            subtitle: Text(
-                                'Number: ${data['vehicleNumber']}'),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit),
-                                  onPressed: () => showEditDialog(
-                                      doc.id, data),
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return const Text("No vehicles registered.");
+                        }
+
+                        return ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: snapshot.data!.docs.length,
+                          itemBuilder: (context, index) {
+                            final doc = snapshot.data!.docs[index];
+                            final data = doc.data() as Map<String, dynamic>;
+
+                            return Card(
+                              elevation: 3,
+                              margin: const EdgeInsets.symmetric(vertical: 8),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: ListTile(
+                                leading: const Icon(Icons.directions_car, color: Colors.blueAccent),
+                                title: Text(
+                                  data['vehicleName'] ?? '',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete),
-                                  onPressed: () =>
-                                      deleteVehicle(doc.id),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text("Number: ${data['vehicleNumber'] ?? ''}"),
+                                    Text("Flat: ${data['flatNumber'] ?? ''}"),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit, color: Colors.green),
+                                      onPressed: () => _editVehicle(data, doc.id),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete, color: Colors.red),
+                                      onPressed: () => _deleteVehicle(doc.id),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
                         );
                       },
                     );

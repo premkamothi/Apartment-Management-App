@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../main.dart';
 import 'committee_member/election_center.dart';
 import 'profile_screen.dart';
 import 'login_screen.dart';
@@ -26,7 +27,12 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String name = "", role = "", flatId = "", currentApartmentName = "", email = "", flatNumber = "";
+  String name = "",
+      role = "",
+      flatId = "",
+      currentApartmentName = "",
+      email = "",
+      flatNumber = "";
   int _selectedIndex = 0;
   bool isElectionActive = false;
   bool showResultTile = false;
@@ -40,52 +46,256 @@ class _HomeScreenState extends State<HomeScreen> {
     return "${dateTime.day}/${dateTime.month}/${dateTime.year} at ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}";
   }
 
-
-
   @override
   void initState() {
     super.initState();
     _listenToUserData();
     _loadDismissedProblemIds();
+  }
 
+  Widget _buildHomeTile(IconData icon, String title, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: Colors.blue.shade50,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 36, color: Colors.blue),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6.0),
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResultTile() {
+    return Slidable(
+      key: const ValueKey('result_tile'),
+      endActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        dismissible: DismissiblePane(onDismissed: _hideResultTileForUser),
+        children: [
+          SlidableAction(
+            onPressed: (_) => _hideResultTileForUser(),
+            backgroundColor: Colors.red.shade300,
+            icon: Icons.delete,
+            label: 'Dismiss',
+          ),
+        ],
+      ),
+      child: Card(
+        color: Colors.orange.shade100,
+        margin: const EdgeInsets.only(bottom: 12),
+        child: ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          leading: const Icon(Icons.emoji_events, color: Colors.deepOrange),
+          title: const Text("Election results are available!",
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: const Text("Check out who won the election."),
+          onTap: () {
+            Navigator.push(
+                context, MaterialPageRoute(builder: (_) => ElectionResult()));
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildElectionActiveTile() {
+    return Card(
+      color: Colors.blue.shade100,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.how_to_vote, color: Colors.blue),
+        title: const Text("Election is active now!"),
+        subtitle: const Text("Give your vote to your preferred candidate."),
+        trailing: TextButton(
+          onPressed: () => Navigator.push(
+              context, MaterialPageRoute(builder: (_) => VoteScreen())),
+          child: const Text("Vote", style: TextStyle(color: Colors.blue)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProblemCard(Map<String, dynamic> problem) {
+    return GestureDetector(
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: Text(problem['title'] ?? 'No Title'),
+            content: Text(problem['description'] ?? 'No Description'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Close"),
+              ),
+            ],
+          ),
+        );
+      },
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        color: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.report_problem_outlined,
+                      color: Colors.blue, size: 24),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      problem['title'] ?? 'No Title',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () async {
+                      setState(() {
+                        _problems.removeWhere((p) => p['id'] == problem['id']);
+                      });
+                      await _dismissProblemTile(problem['id']);
+                    },
+                    child: const Icon(Icons.close, color: Colors.red),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                "Raised by: ${problem['name'] ?? 'Unknown'}",
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                problem['description'] ?? '',
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Colors.black87,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _fetchUserProblems() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    FirebaseFirestore.instance
-        .collection('problems')
-        .where('flatId', isEqualTo: flatId)
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .listen((snapshot) {
-      if (!mounted) return;
-      final allProblems = snapshot.docs.map((doc) {
-        final data = doc.data();
-        data['id'] = doc.id;
-        return data;
-      }).where((problem) => !_dismissedProblemIds.contains(problem['id'])).toList();
+    final userId = user.uid;
 
-      setState(() => _problems = allProblems);
+    // Listen for dismissed problems in real-time too, in case they change
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .snapshots()
+        .listen((userSnapshot) {
+      if (!userSnapshot.exists) return;
+
+      List<String> dismissedProblemIds =
+          List<String>.from(userSnapshot.data()?['dismissedProblems'] ?? []);
+
+      FirebaseFirestore.instance
+          .collection('problems')
+          .where('flatId', isEqualTo: flatId)
+          .orderBy('timestamp', descending: true)
+          .snapshots()
+          .listen((snapshot) {
+        if (!mounted) return;
+
+        final allProblems = snapshot.docs
+            .map((doc) {
+              final data = doc.data();
+              data['id'] = doc.id;
+              return data;
+            })
+            .where((problem) => !dismissedProblemIds.contains(problem['id']))
+            .toList();
+
+        setState(() {
+          for (var problem in allProblems) {
+            final index = _problems.indexWhere((p) => p['id'] == problem['id']);
+            if (index == -1) {
+              _problems.add(problem); // New problem
+            } else {
+              _problems[index] = problem; // Updated problem
+            }
+          }
+
+          // Remove problems that no longer exist in Firestore or were dismissed
+          _problems.removeWhere(
+              (problem) => !allProblems.any((p) => p['id'] == problem['id']));
+        });
+      });
     });
   }
 
   void _loadDismissedProblemIds() async {
     final prefs = await SharedPreferences.getInstance();
-    final key = 'dismissed_problems_${FirebaseAuth.instance.currentUser?.uid ?? ""}';
+    final key =
+        'dismissed_problems_${FirebaseAuth.instance.currentUser?.uid ?? ""}';
     final ids = prefs.getStringList(key) ?? [];
     setState(() => _dismissedProblemIds = ids);
   }
 
   Future<void> _dismissProblemTile(String problemId) async {
     final prefs = await SharedPreferences.getInstance();
-    final key = 'dismissed_problems_${FirebaseAuth.instance.currentUser?.uid ?? ""}';
+    final key =
+        'dismissed_problems_${FirebaseAuth.instance.currentUser?.uid ?? ""}';
+
     _dismissedProblemIds.add(problemId);
     await prefs.setStringList(key, _dismissedProblemIds);
-    _fetchUserProblems(); // Refresh UI
-  }
 
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId != null) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .update({
+          'dismissedProblems': FieldValue.arrayUnion([problemId]),
+        });
+      } catch (e) {
+        print("Error dismissing problem: $e");
+      }
+    }
+  }
 
   void _listenToUserData() {
     User? user = FirebaseAuth.instance.currentUser;
@@ -120,7 +330,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-
   void _apartmentNameData(String flatId) {
     FirebaseFirestore.instance
         .collection('committees')
@@ -154,7 +363,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final isDismissed = prefs.getBool(dismissKey) ?? false;
 
       if (!electionDoc.exists) {
-        final wasResultDeclared = prefs.getBool('result_declared_$flatId') ?? false;
+        final wasResultDeclared =
+            prefs.getBool('result_declared_$flatId') ?? false;
         setState(() {
           isElectionActive = false;
           showResultTile = wasResultDeclared && !isDismissed;
@@ -177,16 +387,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _logout() async {
     await FirebaseAuth.instance.signOut();
-    Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) {
-          try {
-            return HomeScreen();
-          } catch (e) {
-            print("Error navigating to HomeScreen: $e");
-            return Scaffold(body: Center(child: Text('Error loading HomeScreen')));
-          }
-        }));
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) {
+      try {
+        return LoginScreen();
+      } catch (e) {
+        print("Error navigating to HomeScreen: $e");
+        return Scaffold(body: Center(child: Text('Error loading HomeScreen')));
+      }
+    }));
   }
 
   void _onItemTapped(int index) {
@@ -205,16 +413,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   final List<Widget> _pages = [
-    Center(child: Text("Welcome to the Society App!", style: TextStyle(fontSize: 20))),
+    Center(
+        child: Text("Welcome to the Society App!",
+            style: TextStyle(fontSize: 20))),
     NotificationScreen(),
-    Center(child: Text("Maintenance Payments (Coming Soon)", style: TextStyle(fontSize: 20))),
+    Center(
+        child: Text("Maintenance Payments (Coming Soon)",
+            style: TextStyle(fontSize: 20))),
     NotificationScreen(), // Optional duplicate
     RaiseProblems(),
   ];
 
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: false,
       appBar: AppBar(
         centerTitle: true,
         title: Row(
@@ -231,6 +446,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
+
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
@@ -264,252 +480,136 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             ListTile(
-              leading: const Icon(Icons.home),
-              title: const Text("Home"),
+              leading: Icon(Icons.home),
+              title: Text("Home"),
               onTap: () {
                 _onItemTapped(0);
                 Navigator.pop(context);
               },
             ),
+            Divider(),
             ListTile(
-              leading: const Icon(Icons.rule_rounded),
-              title: const Text("Rules & Regulations"),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => Rule())),
-            ),
-            ListTile(
-              leading: const Icon(Icons.motorcycle_outlined),
-              title: const Text("Vehicle Registration"),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => VehicleRegistration())),
-            ),
-            ListTile(
-              leading: const Icon(Icons.family_restroom),
-              title: const Text("Member Details"),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => MemberDetail())),
-            ),
-            if (role == "Committee Member") const Divider(),
-            if (role == "Committee Member")
-              ListTile(
-                leading: const Icon(Icons.group_add),
-                title: const Text("Create Committee"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => CreateCommitteeScreen())),
-              ),
-            if (role == "Committee Member")
-              ListTile(
-                leading: const Icon(Icons.how_to_vote_rounded),
-                title: const Text("Election Center"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => ElectionCenter())),
-              ),
-            if (role == "Committee Member")
-              ListTile(
-                leading: const Icon(Icons.campaign),
-                title: const Text("Send Notification"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => SendNotification())),
-              ),
-            if (role == "Committee Member")
-              ListTile(
-                leading: const Icon(Icons.local_parking),
-                title: const Text("Parking Allotment"),
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => AllotParking())),
-              ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text("Logout"),
+              leading: Icon(Icons.logout),
+              title: Text("Logout"),
               onTap: _logout,
             ),
           ],
         ),
       ),
-      body: Column(
-        children: [
-          if (_selectedIndex == 0 && showResultTile)
-            Slidable(
-              key: const ValueKey('result_tile'),
-              endActionPane: ActionPane(
-                motion: const DrawerMotion(),
-                dismissible: DismissiblePane(onDismissed: _hideResultTileForUser),
+      body: ScrollConfiguration(
+        behavior: NoGlowScrollBehavior(), // disable scroll glow + bar
+        child: SafeArea(
+          child: _selectedIndex == 0
+              ? SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SlidableAction(
-                    onPressed: (_) => _hideResultTileForUser(),
-                    backgroundColor: Colors.red.shade300,
-                    icon: Icons.delete,
-                    label: 'Dismiss',
+                   SizedBox(height: 6),
+                  // Main Grid for all users
+                  GridView.count(
+                    crossAxisCount: 3,
+                    shrinkWrap: true,
+                    physics: NeverScrollableScrollPhysics(),
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: 1.0, // Perfect Square
+                    children: [
+                      _buildHomeTile(Icons.rule_rounded, "Rules & Regulations", () {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => Rule()));
+                      }),
+                      _buildHomeTile(Icons.motorcycle_outlined, "Vehicle Registration", () {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => VehicleManager()));
+                      }),
+                      _buildHomeTile(Icons.family_restroom, "Member Details", () {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetail()));
+                      }),
+                    ],
                   ),
-                ],
-              ),
-              child: Card(
-                color: Colors.orange.shade100,
-                margin: const EdgeInsets.all(10),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  leading: const Icon(Icons.emoji_events, color: Colors.deepOrange),
-                  title: const Text(
-                    "Election results are available!",
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: const Text("Check out who won the election."),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => ElectionResult()),
-                    );
-                  },
-                ),
-              ),
-            )
 
+                  SizedBox(height: 20),
 
-          else if (_selectedIndex == 0 && isElectionActive)
-            Card(
-              color: Colors.blue.shade100,
-              margin: EdgeInsets.all(10),
-              child: ListTile(
-                leading: Icon(Icons.how_to_vote, color: Colors.blue),
-                title: Text("Election is active now!"),
-                subtitle: Text("Give your vote to your preferred candidate."),
-                trailing: TextButton(
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => VoteScreen())),
-                  child: Text("Vote", style: TextStyle(color: Colors.blue)),
-                ),
-              ),
-            ),
-          Expanded(
-            child: _selectedIndex == 0
-                ? ListView.builder(
-              itemCount: _problems.length,
-              itemBuilder: (context, index) {
-                final problem = _problems[index];
-                Widget _buildProblemCard(Map<String, dynamic> problem) {
-                  final DateTime problemDateTime = problem['timestamp']?.toDate() ?? DateTime.now();
-                  final formattedDate = DateFormat('MMM dd').format(problemDateTime);
-                  final formattedTime = DateFormat('hh:mm a').format(problemDateTime);
-
-                  return Slidable(
-                    key: ValueKey(problem['id']),
-                    startActionPane: ActionPane(
-                      motion: const DrawerMotion(),
-                      extentRatio: 0.3,
+                  // Committee Member Exclusive Grid
+                  if (role == "Committee Member") ...[
+                    GridView.count(
+                      crossAxisCount: 3,
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 1.0,
                       children: [
-                        SlidableAction(
-                          onPressed: (_) {},
-                          backgroundColor: Colors.blue.shade100,
-                          foregroundColor: Colors.black87,
-                          label: "$formattedDate\n$formattedTime",
-                          autoClose: true,
-                          flex: 1,
-                        ),
+                        _buildHomeTile(Icons.group_add, "Create Committee", () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => CreateCommitteeScreen()));
+                        }),
+                        _buildHomeTile(Icons.how_to_vote_rounded, "Election Center", () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => ElectionCenter()));
+                        }),
+                        _buildHomeTile(Icons.local_parking, "Parking Allotment", () {
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => AllotParking()));
+                        }),
                       ],
                     ),
-                    endActionPane: ActionPane(
-                      motion: const DrawerMotion(),
-                      dismissible: DismissiblePane(
-                        onDismissed: () => _dismissProblemTile(problem['id']),
-                      ),
-                      children: [
-                        SlidableAction(
-                          onPressed: (_) => _dismissProblemTile(problem['id']),
-                          backgroundColor: Colors.red.shade300,
-                          icon: Icons.delete,
-                          label: 'Dismiss',
-                        ),
-                      ],
-                    ),
-                    child: InkWell(
-                      onTap: () {
-                        showDialog(
-                          context: context,
-                          builder: (_) => AlertDialog(
-                            title: Text(problem['title'] ?? 'No Title'),
-                            content: Text(problem['description'] ?? 'No Description'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text("Close"),
-                              ),
-                            ],
+                    SizedBox(height: 20),
+                  ],
+
+                  // Raised Problems Section
+                  Text("Raised Problems", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 10),
+                  SizedBox(
+                    height: 130,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _problems.reversed.length,
+                      itemBuilder: (context, index) {
+                        final reversedProblems = _problems.reversed.toList();
+                        final problem = reversedProblems[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: SizedBox(
+                            width: 280,
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                _buildProblemCard(problem),
+                                Positioned(
+                                  top: -10,
+                                  right: 10,
+                                  child: Text(
+                                    DateFormat('hh:mm a').format(
+                                      problem['timestamp']?.toDate() ?? DateTime.now(),
+                                    ),
+                                    style: TextStyle(fontSize: 11, color: Colors.black87),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         );
                       },
-                      child: Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        color: Colors.white,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              /// First Row: Icon + Title + Raised By (all in a line)
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.report_problem_outlined, color: Colors.blue, size: 24),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            problem['title'] ?? 'No Title',
-                                            style: const TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.black87,
-                                            ),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Text(
-                                          "Raised by: ${problem['name'] ?? 'Unknown'}",
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
+                    ),
+                  ),
 
-                              const SizedBox(height: 6),
+                  SizedBox(height: 20),
 
-                              /// Second Row: Description preview (only one line)
-                              Text(
-                                problem['description'] ?? '',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.black87,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    )
+                  // Election Updates Section
+                  Text("Election Updates", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 8),
+                  if (!showResultTile && !isElectionActive)
+                    Center(child: Text("No election updates.", style: TextStyle(color: Colors.grey))),
+                  if (showResultTile) _buildResultTile(),
+                  if (isElectionActive) _buildElectionActiveTile(),
 
-
-                  );
-                }
-
-                return _buildProblemCard(problem);
-              },
-            )
-                : _pages[_selectedIndex],
-          ),
-
-
-        ],
+                ],
+              ),
+            ),
+          )
+              : _pages[_selectedIndex],
+        ),
       ),
       bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
+        items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
           BottomNavigationBarItem(icon: Icon(Icons.notifications), label: "Notice"),
           BottomNavigationBarItem(icon: Icon(Icons.payments), label: "Pay Maintenance"),
@@ -523,14 +623,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
 
-  String _getTitle(int index) {
-    return [
-      "Home",
-      "Notifications",
-      "Pay Maintenances",
-      "Notice",
-      "Raise Problem"
-    ][index];
-  }
+String _getTitle(int index) {
+  return [
+    "Home",
+    "Notification",
+    "Pay Maintenance",
+    "Notice",
+    "Raise Problem"
+  ][index];
 }
